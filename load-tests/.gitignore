@@ -1,0 +1,43 @@
+# Load Tests .gitignore
+
+# Test results
+results/*.json
+results/*.html
+results/*.xml
+results/*.txt
+results/*.csv
+
+# Keep the results directory but ignore contents
+!results/.gitkeep
+
+# K6 cloud outputs
+k6-cloud-*.json
+k6-*.json
+
+# Artillery outputs
+artillery-report-*.json
+artillery-report-*.html
+
+# JMeter outputs
+*.jtl
+*.jmx~
+
+# Locust outputs
+*.csv
+locust-*.html
+
+# Test data files
+test-data/*.csv
+test-data/*.json
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+tmp/
+temp/
+
+# IDE
+.vscode/
+.idea/

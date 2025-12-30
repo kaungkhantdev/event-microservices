@@ -1,0 +1,97 @@
+# .gitattributes - Git line ending and file handling configuration
+
+# Auto detect text files and normalize line endings to LF
+* text=auto eol=lf
+
+# Explicitly declare text files
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.xml text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.scss text eol=lf
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Configuration files
+.gitignore text eol=lf
+.gitattributes text eol=lf
+.editorconfig text eol=lf
+.eslintrc* text eol=lf
+.prettierrc* text eol=lf
+Dockerfile text eol=lf
+docker-compose*.yml text eol=lf
+*.env.example text eol=lf
+
+# Scripts should always use LF (important for Unix/Linux)
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Windows scripts should use CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary files (mark as binary to prevent line ending conversion)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.tgz binary
+*.7z binary
+*.rar binary
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.woff binary
+*.woff2 binary
+*.eot binary
+*.ttf binary
+*.otf binary
+
+# Archives
+*.zip binary
+*.tar binary
+*.gz binary
+*.bz2 binary
+*.xz binary
+
+# Node.js
+package-lock.json -diff
+yarn.lock -diff
+pnpm-lock.yaml -diff
+
+# Git LFS (Large File Storage) - if you use it
+*.psd filter=lfs diff=lfs merge=lfs -text
+*.ai filter=lfs diff=lfs merge=lfs -text
+*.sketch filter=lfs diff=lfs merge=lfs -text
+
+# Linguist overrides (for GitHub language statistics)
+*.md linguist-documentation
+*.yml linguist-language=YAML
+*.yaml linguist-language=YAML
+docs/* linguist-documentation
+load-tests/* linguist-vendored
+
+# Export-ignore (files not included in git archive)
+.gitattributes export-ignore
+.gitignore export-ignore
+.github export-ignore
+.vscode export-ignore
+.idea export-ignore
+docs export-ignore
+load-tests/results export-ignore
+*.md export-ignore

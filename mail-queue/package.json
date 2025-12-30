@@ -1,0 +1,20 @@
+{
+  "name": "mail-queue-service",
+  "version": "1.0.0",
+  "description": "Mail Queue Service for Event System",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "bull": "^4.12.0",
+    "redis": "^4.6.11",
+    "nodemailer": "^6.9.7",
+    "handlebars": "^4.7.8"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
