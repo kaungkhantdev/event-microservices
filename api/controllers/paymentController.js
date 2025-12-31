@@ -1,4 +1,4 @@
-const { paymentQueue } = require('../queues');
+const { publishToPayment } = require('../queues');
 const Payment = require('../models/Payment');
 const { Op } = require('sequelize');
 
@@ -48,36 +48,28 @@ const createPayment = async (req, res) => {
       provider: process.env.PAYMENT_PROVIDER || 'mock'
     });
 
-    // STEP 2: Queue to Redis for async processing
+    // STEP 2: Publish to RabbitMQ for async processing
     try {
-      const job = await paymentQueue.add('process-payment', {
-        paymentId: payment.id
-      }, {
-        priority: 1,
-        attempts: 3,
-        backoff: {
-          type: 'exponential',
-          delay: 2000
-        }
-      });
-
-      // Update payment with job ID
-      await payment.update({ jobId: job.id.toString() });
+      await publishToPayment('payment.created', {
+        paymentId: payment.id,
+        userId,
+        amount: payment.amount,
+        currency: payment.currency
+      }, { priority: 10 });
 
       res.status(202).json({
         message: 'Payment is being processed',
         paymentId: payment.id,
-        jobId: job.id,
         status: payment.status,
         userId,
         amount: payment.amount,
         currency: payment.currency,
         createdAt: payment.createdAt
       });
-    } catch (queueError) {
-      // If Redis fails, we still have the payment in DB
+    } catch (publishError) {
+      // If RabbitMQ fails, we still have the payment in DB
       // Recovery cron job will pick it up
-      console.error('Failed to queue payment, will be retried by recovery job:', queueError);
+      console.error('Failed to publish payment, will be retried by recovery job:', publishError);
 
       res.status(202).json({
         message: 'Payment recorded, processing will begin shortly',
@@ -135,24 +127,16 @@ const createRefund = async (req, res) => {
     // Update payment status
     await payment.update({ status: 'refunded' });
 
-    // Queue refund job
-    const job = await paymentQueue.add('process-refund', {
+    // Publish refund event
+    await publishToPayment('payment.refund', {
       paymentId: payment.id,
       transactionId: payment.transactionId,
       amount,
       reason: reason || 'Customer request'
-    }, {
-      priority: 2,
-      attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 2000
-      }
-    });
+    }, { priority: 9 });
 
     res.status(202).json({
       message: 'Refund is being processed',
-      jobId: job.id,
       paymentId: payment.id,
       transactionId: payment.transactionId,
       amount
@@ -179,26 +163,6 @@ const getPaymentStatus = async (req, res) => {
       });
     }
 
-    // Optionally get job status from Redis
-    let jobStatus = null;
-    if (payment.jobId) {
-      try {
-        const job = await paymentQueue.getJob(payment.jobId);
-        if (job) {
-          const state = await job.getState();
-          jobStatus = {
-            jobId: job.id,
-            state,
-            failedReason: job.failedReason,
-            processedOn: job.processedOn,
-            finishedOn: job.finishedOn
-          };
-        }
-      } catch (jobError) {
-        console.error('Could not fetch job status:', jobError);
-      }
-    }
-
     res.json({
       paymentId: payment.id,
       userId: payment.userId,
@@ -212,8 +176,7 @@ const getPaymentStatus = async (req, res) => {
       metadata: payment.metadata,
       createdAt: payment.createdAt,
       processedAt: payment.processedAt,
-      completedAt: payment.completedAt,
-      jobStatus
+      completedAt: payment.completedAt
     });
   } catch (error) {
     console.error('Error getting payment status:', error);

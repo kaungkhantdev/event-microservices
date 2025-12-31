@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const Queue = require('bull');
+const RabbitMQWorker = require('./config/rabbitmq');
 const {
   processPayment,
   processRefund,
@@ -9,55 +9,47 @@ const {
 const app = express();
 const HEALTH_PORT = process.env.HEALTH_PORT || 3003;
 
-const redisConfig = {
-  redis: {
-    host: process.env.REDIS_HOST,
-    port: process.env.REDIS_PORT,
-    password: process.env.REDIS_PASSWORD || undefined,
-  }
-};
+const bindings = [
+  'payment.created',
+  'payment.completed',
+  'payment.failed',
+  'payment.refund',
+  'order.created',
+];
 
-const paymentQueue = new Queue('payment', redisConfig);
+const worker = new RabbitMQWorker('payment-service', bindings);
 
-paymentQueue.process('process-payment', 3, async (job) => {
-  console.log(`Processing process-payment job: ${job.id}`);
-  return await processPayment(job);
+worker.registerHandler('payment.created', async (data) => {
+  console.log(`Processing payment.created`);
+  await processPayment({ data });
 });
 
-paymentQueue.process('process-refund', 2, async (job) => {
-  console.log(`Processing process-refund job: ${job.id}`);
-  return await processRefund(job);
+worker.registerHandler('payment.refund', async (data) => {
+  console.log(`Processing payment.refund`);
+  await processRefund({ data });
 });
 
-paymentQueue.on('completed', (job, result) => {
-  console.log(`✓ Job ${job.id} completed successfully:`, result);
+worker.registerHandler('payment.completed', async (data) => {
+  console.log(`Payment completed: ${data.paymentId}`);
 });
 
-paymentQueue.on('failed', (job, err) => {
-  console.error(`✗ Job ${job.id} failed:`, err.message);
+worker.registerHandler('payment.failed', async (data) => {
+  console.log(`Payment failed: ${data.paymentId}`);
 });
 
-paymentQueue.on('error', (error) => {
-  console.error('✗ Queue error:', error);
+worker.registerHandler('order.created', async (data) => {
+  console.log(`Order created, initiating payment: ${data.orderId}`);
 });
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
   try {
-    const queueHealth = await paymentQueue.client.ping();
-    const jobCounts = await paymentQueue.getJobCounts();
-
     res.status(200).json({
       status: 'healthy',
       service: 'payment-service',
       timestamp: new Date().toISOString(),
-      redis: queueHealth === 'PONG' ? 'connected' : 'disconnected',
-      queue: {
-        waiting: jobCounts.waiting,
-        active: jobCounts.active,
-        completed: jobCounts.completed,
-        failed: jobCounts.failed,
-      }
+      rabbitmq: worker.connection ? 'connected' : 'disconnected',
+      queue: worker.QUEUE
     });
   } catch (error) {
     res.status(503).json({
@@ -73,16 +65,18 @@ const server = app.listen(HEALTH_PORT, () => {
   console.log(`✓ Health check endpoint running on port ${HEALTH_PORT}`);
 });
 
-console.log('✓ Payment queue worker started');
-console.log('✓ Listening for jobs: process-payment, process-refund');
+worker.start();
+
+console.log('✓ Payment service worker started');
+console.log('✓ Listening for events:', bindings);
 
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, closing payment service...');
   server.close(() => {
     console.log('✓ HTTP server closed');
   });
-  await paymentQueue.close();
-  console.log('✓ Payment queue closed');
+  await worker.close();
+  console.log('✓ RabbitMQ worker closed');
   process.exit(0);
 });
 
@@ -91,7 +85,7 @@ process.on('SIGINT', async () => {
   server.close(() => {
     console.log('✓ HTTP server closed');
   });
-  await paymentQueue.close();
-  console.log('✓ Payment queue closed');
+  await worker.close();
+  console.log('✓ RabbitMQ worker closed');
   process.exit(0);
 });

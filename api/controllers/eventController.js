@@ -1,6 +1,6 @@
 const { Op } = require('sequelize');
 const Event = require('../models/Event');
-const { elasticSyncQueue, mailQueue } = require('../queues');
+const { publishToElasticSync, publishToMail } = require('../queues');
 const { invalidateCache } = require('../middleware/cache');
 
 const createEvent = async (req, res, next) => {
@@ -10,16 +10,16 @@ const createEvent = async (req, res, next) => {
     const event = await Event.create(eventData);
 
     await Promise.all([
-      elasticSyncQueue.add('sync-event', {
+      publishToElasticSync('event.created', {
         operation: 'create',
         eventId: event.id,
         data: event.toJSON()
-      }),
-      mailQueue.add('new-event', {
+      }, { priority: 7 }),
+      publishToMail('event.created', {
         eventId: event.id,
         title: event.title,
         startDate: event.startDate
-      }),
+      }, { priority: 5 }),
       invalidateCache('event:*')
     ]);
 
@@ -122,11 +122,11 @@ const updateEvent = async (req, res, next) => {
     await event.update(updateData);
 
     await Promise.all([
-      elasticSyncQueue.add('sync-event', {
+      publishToElasticSync('event.updated', {
         operation: 'update',
         eventId: event.id,
         data: event.toJSON()
-      }),
+      }, { priority: 7 }),
       invalidateCache('event:*')
     ]);
 
@@ -156,10 +156,10 @@ const deleteEvent = async (req, res, next) => {
     await event.destroy();
 
     await Promise.all([
-      elasticSyncQueue.add('sync-event', {
+      publishToElasticSync('event.deleted', {
         operation: 'delete',
         eventId: id
-      }),
+      }, { priority: 7 }),
       invalidateCache('event:*')
     ]);
 

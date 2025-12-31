@@ -1,32 +1,21 @@
 require('dotenv').config();
-const Queue = require('bull');
+const rabbitmq = require('../config/rabbitmq');
 
-const redisConfig = {
-  redis: {
-    host: process.env.REDIS_HOST,
-    port: process.env.REDIS_PORT,
-    password: process.env.REDIS_PASSWORD || undefined,
-  }
+const publishToElasticSync = async (routingKey, data, options = {}) => {
+  return await rabbitmq.publish(routingKey, data, options);
 };
 
-const elasticSyncQueue = new Queue('elastic-sync', redisConfig);
-const mailQueue = new Queue('mail', redisConfig);
-const paymentQueue = new Queue('payment', redisConfig);
+const publishToMail = async (routingKey, data, options = {}) => {
+  return await rabbitmq.publish(routingKey, data, options);
+};
 
-elasticSyncQueue.on('error', (error) => {
-  console.error('ElasticSync Queue Error:', error);
-});
-
-mailQueue.on('error', (error) => {
-  console.error('Mail Queue Error:', error);
-});
-
-paymentQueue.on('error', (error) => {
-  console.error('Payment Queue Error:', error);
-});
+const publishToPayment = async (routingKey, data, options = {}) => {
+  return await rabbitmq.publish(routingKey, data, options);
+};
 
 module.exports = {
-  elasticSyncQueue,
-  mailQueue,
-  paymentQueue
+  publishToElasticSync,
+  publishToMail,
+  publishToPayment,
+  rabbitmq
 };

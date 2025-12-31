@@ -32,10 +32,13 @@ app.use('/api/payments', paymentRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
+const { rabbitmq } = require('./queues/index');
+
 const startServer = async () => {
   try {
     await connectDB();
     await checkConnection();
+    await rabbitmq.connect();
 
     app.listen(PORT, () => {
       console.log(`✓ Server running on port ${PORT}`);

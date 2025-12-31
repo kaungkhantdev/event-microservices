@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const Queue = require('bull');
+const RabbitMQWorker = require('./config/rabbitmq');
 const {
   processNewEvent,
   processForgotPassword,
@@ -12,70 +12,62 @@ const {
 const app = express();
 const HEALTH_PORT = process.env.HEALTH_PORT || 3005;
 
-const redisConfig = {
-  redis: {
-    host: process.env.REDIS_HOST,
-    port: process.env.REDIS_PORT,
-    password: process.env.REDIS_PASSWORD || undefined,
-  }
-};
+const bindings = [
+  'user.registered',
+  'user.password-reset',
+  'order.completed',
+  'payment.completed',
+  'payment.failed',
+  'event.reminder',
+  'event.created',
+];
 
-const mailQueue = new Queue('mail', redisConfig);
+const worker = new RabbitMQWorker('mail-service', bindings);
 
-mailQueue.process('new-event', 5, async (job) => {
-  console.log(`Processing new-event job: ${job.id}`);
-  return await processNewEvent(job);
+worker.registerHandler('event.created', async (data) => {
+  console.log(`Processing event.created`);
+  await processNewEvent({ data });
 });
 
-mailQueue.process('forgot-password', 10, async (job) => {
-  console.log(`🔥 Processing forgot-password job: ${job.id} - Priority: 1 (HIGHEST)`);
-  return await processForgotPassword(job);
+worker.registerHandler('user.password-reset', async (data) => {
+  console.log(`🔥 Processing user.password-reset - Priority: 1 (HIGHEST)`);
+  await processForgotPassword({ data });
 });
 
-mailQueue.process('registration', 5, async (job) => {
-  console.log(`Processing registration job: ${job.id}`);
-  return await processRegistration(job);
+worker.registerHandler('user.registered', async (data) => {
+  console.log(`Processing user.registered`);
+  await processRegistration({ data });
 });
 
-mailQueue.process('reminder', 5, async (job) => {
-  console.log(`Processing reminder job: ${job.id}`);
-  return await processReminder(job);
+worker.registerHandler('event.reminder', async (data) => {
+  console.log(`Processing event.reminder`);
+  await processReminder({ data });
 });
 
-mailQueue.process('password-reset-confirmation', 5, async (job) => {
-  console.log(`Processing password-reset-confirmation job: ${job.id} - Priority: 2`);
-  return await processPasswordResetConfirmation(job);
+worker.registerHandler('payment.completed', async (data) => {
+  console.log(`Processing payment.completed - sending receipt`);
+  // Send payment receipt email
 });
 
-mailQueue.on('completed', (job, result) => {
-  console.log(`✓ Job ${job.id} completed successfully:`, result);
+worker.registerHandler('payment.failed', async (data) => {
+  console.log(`Processing payment.failed - sending failure notification`);
+  // Send payment failure email
 });
 
-mailQueue.on('failed', (job, err) => {
-  console.error(`✗ Job ${job.id} failed:`, err.message);
-});
-
-mailQueue.on('error', (error) => {
-  console.error('✗ Queue error:', error);
+worker.registerHandler('order.completed', async (data) => {
+  console.log(`Processing order.completed - sending confirmation`);
+  // Send order confirmation email
 });
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
   try {
-    const queueHealth = await mailQueue.client.ping();
-    const jobCounts = await mailQueue.getJobCounts();
-
     res.status(200).json({
       status: 'healthy',
       service: 'mail-queue',
       timestamp: new Date().toISOString(),
-      redis: queueHealth === 'PONG' ? 'connected' : 'disconnected',
-      queue: {
-        waiting: jobCounts.waiting,
-        active: jobCounts.active,
-        completed: jobCounts.completed,
-        failed: jobCounts.failed,
-      }
+      rabbitmq: worker.connection ? 'connected' : 'disconnected',
+      queue: worker.QUEUE
     });
   } catch (error) {
     res.status(503).json({
@@ -91,21 +83,18 @@ const server = app.listen(HEALTH_PORT, () => {
   console.log(`✓ Health check endpoint running on port ${HEALTH_PORT}`);
 });
 
-console.log('✓ Mail queue worker started');
-console.log('✓ Listening for jobs with priorities:');
-console.log('  - forgot-password (Priority: 1 - HIGHEST)');
-console.log('  - password-reset-confirmation (Priority: 2 - HIGH)');
-console.log('  - registration (Priority: 3 - MEDIUM)');
-console.log('  - new-event (Priority: 5 - NORMAL)');
-console.log('  - reminder (Priority: 5 - NORMAL)');
+worker.start();
+
+console.log('✓ Mail service worker started');
+console.log('✓ Listening for events:', bindings);
 
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, closing mail service...');
   server.close(() => {
     console.log('✓ HTTP server closed');
   });
-  await mailQueue.close();
-  console.log('✓ Mail queue closed');
+  await worker.close();
+  console.log('✓ RabbitMQ worker closed');
   process.exit(0);
 });
 
@@ -114,7 +103,7 @@ process.on('SIGINT', async () => {
   server.close(() => {
     console.log('✓ HTTP server closed');
   });
-  await mailQueue.close();
-  console.log('✓ Mail queue closed');
+  await worker.close();
+  console.log('✓ RabbitMQ worker closed');
   process.exit(0);
 });

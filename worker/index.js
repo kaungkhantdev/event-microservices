@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const Queue = require('bull');
+const RabbitMQWorker = require('./config/rabbitmq');
 const { checkConnection, initializeIndex } = require('./config/elasticsearch');
 const { sequelize } = require('./config/database');
 const {
@@ -12,15 +12,14 @@ const { initializeScheduledJobs } = require('./jobs/scheduledJobs');
 const app = express();
 const HEALTH_PORT = process.env.HEALTH_PORT || 3004;
 
-const redisConfig = {
-  redis: {
-    host: process.env.REDIS_HOST,
-    port: process.env.REDIS_PORT,
-    password: process.env.REDIS_PASSWORD || undefined,
-  }
-};
+const bindings = [
+  'event.created',
+  'event.updated',
+  'event.deleted',
+  'order.created',
+];
 
-const elasticSyncQueue = new Queue('elastic-sync', redisConfig);
+const worker = new RabbitMQWorker('search-service', bindings);
 
 const startWorker = async () => {
   try {
@@ -34,27 +33,26 @@ const startWorker = async () => {
 
     await initializeIndex();
 
-    elasticSyncQueue.process('sync-event', 5, async (job) => {
-      console.log(`Processing sync-event job: ${job.id}`);
-      return await syncEventToElastic(job);
+    worker.registerHandler('event.created', async (data) => {
+      console.log(`Processing event.created`);
+      await syncEventToElastic({ data: { operation: 'create', ...data } });
     });
 
-    elasticSyncQueue.process('bulk-sync', 1, async (job) => {
-      console.log(`Processing bulk-sync job: ${job.id}`);
-      return await bulkSyncToElastic(job);
+    worker.registerHandler('event.updated', async (data) => {
+      console.log(`Processing event.updated`);
+      await syncEventToElastic({ data: { operation: 'update', ...data } });
     });
 
-    elasticSyncQueue.on('completed', (job, result) => {
-      console.log(`✓ Job ${job.id} completed:`, result);
+    worker.registerHandler('event.deleted', async (data) => {
+      console.log(`Processing event.deleted`);
+      await syncEventToElastic({ data: { operation: 'delete', ...data } });
     });
 
-    elasticSyncQueue.on('failed', (job, err) => {
-      console.error(`✗ Job ${job.id} failed:`, err.message);
+    worker.registerHandler('order.created', async (data) => {
+      console.log(`Processing order.created for search indexing`);
     });
 
-    elasticSyncQueue.on('error', (error) => {
-      console.error('✗ Queue error:', error);
-    });
+    worker.start();
 
     initializeScheduledJobs();
 
@@ -63,10 +61,8 @@ const startWorker = async () => {
       try {
         const dbHealthy = await sequelize.authenticate().then(() => true).catch(() => false);
         const esHealthy = await checkConnection();
-        const queueHealth = await elasticSyncQueue.client.ping();
-        const jobCounts = await elasticSyncQueue.getJobCounts();
 
-        const isHealthy = dbHealthy && esHealthy && queueHealth === 'PONG';
+        const isHealthy = dbHealthy && esHealthy && worker.connection;
 
         res.status(isHealthy ? 200 : 503).json({
           status: isHealthy ? 'healthy' : 'unhealthy',
@@ -75,14 +71,9 @@ const startWorker = async () => {
           dependencies: {
             database: dbHealthy ? 'connected' : 'disconnected',
             elasticsearch: esHealthy ? 'connected' : 'disconnected',
-            redis: queueHealth === 'PONG' ? 'connected' : 'disconnected',
+            rabbitmq: worker.connection ? 'connected' : 'disconnected',
           },
-          queue: {
-            waiting: jobCounts.waiting,
-            active: jobCounts.active,
-            completed: jobCounts.completed,
-            failed: jobCounts.failed,
-          }
+          queue: worker.QUEUE
         });
       } catch (error) {
         res.status(503).json({
@@ -99,7 +90,7 @@ const startWorker = async () => {
     });
 
     console.log('✓ Background worker started');
-    console.log('✓ Listening for Elasticsearch sync jobs');
+    console.log('✓ Listening for events:', bindings);
 
     // Graceful shutdown handlers
     const shutdown = async (signal) => {
@@ -107,8 +98,8 @@ const startWorker = async () => {
       server.close(() => {
         console.log('✓ HTTP server closed');
       });
-      await elasticSyncQueue.close();
-      console.log('✓ Elastic sync queue closed');
+      await worker.close();
+      console.log('✓ RabbitMQ worker closed');
       await sequelize.close();
       console.log('✓ Database connection closed');
       process.exit(0);
